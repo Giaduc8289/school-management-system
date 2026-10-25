@@ -1,5 +1,9 @@
 import { Student } from '../../domain/entities/student.entity';
-import type { StudentRepository } from '../../application/ports/student-repository.interface';
+import type {
+  FindStudentsQuery,
+  FindStudentsResult,
+  StudentRepository,
+} from '../../application/ports/student-repository.interface';
 
 interface StudentRecord {
   id: string;
@@ -11,10 +15,14 @@ interface StudentRecord {
 }
 
 export interface StudentQueryClient {
-  query(
+  query<Row = StudentRecord>(
     statement: string,
     values?: unknown[],
-  ): Promise<{ rows: StudentRecord[] }>;
+  ): Promise<{ rows: Row[] }>;
+}
+
+interface StudentCountRecord {
+  total: string | number;
 }
 
 export class PostgresStudentRepository implements StudentRepository {
@@ -60,6 +68,51 @@ export class PostgresStudentRepository implements StudentRepository {
 
     const record = result.rows[0];
     return record ? this.toStudent(record) : undefined;
+  }
+
+  async findMany(query: FindStudentsQuery): Promise<FindStudentsResult> {
+    const conditions: string[] = [];
+    const filterValues: unknown[] = [];
+
+    if (query.status !== undefined) {
+      filterValues.push(query.status);
+      conditions.push(`status = $${filterValues.length}`);
+    }
+
+    if (query.search !== undefined) {
+      filterValues.push(query.search);
+      const parameter = `$${filterValues.length}`;
+      conditions.push(
+        `(POSITION(LOWER(${parameter}) IN LOWER(code)) > 0
+          OR POSITION(LOWER(${parameter}) IN LOWER(full_name)) > 0
+          OR POSITION(LOWER(${parameter}) IN LOWER(email)) > 0)`,
+      );
+    }
+
+    const whereClause = conditions.length
+      ? `WHERE ${conditions.join(' AND ')}`
+      : '';
+    const countResult = await this.client.query<StudentCountRecord>(
+      `SELECT COUNT(*) AS total FROM students ${whereClause}`,
+      filterValues,
+    );
+    const total = Number(countResult.rows[0]?.total ?? 0);
+
+    const offset = (query.page - 1) * query.pageSize;
+    const result = await this.client.query<StudentRecord>(
+      `SELECT id, code, full_name, email, date_of_birth, status
+       FROM students
+       ${whereClause}
+       ORDER BY id ASC
+       LIMIT $${filterValues.length + 1}
+       OFFSET $${filterValues.length + 2}`,
+      [...filterValues, query.pageSize, offset],
+    );
+
+    return {
+      items: result.rows.map((record) => this.toStudent(record)),
+      total,
+    };
   }
 
   private toStudent(record: StudentRecord): Student {

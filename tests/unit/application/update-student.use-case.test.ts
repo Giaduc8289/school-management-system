@@ -26,6 +26,7 @@ describe('UpdateStudentUseCase', () => {
       findById: jest.fn(async (id: string) =>
         id === studentId ? student : undefined,
       ),
+      findMany: jest.fn(async () => ({ items: [], total: 0 })),
     };
     useCase = new UpdateStudentUseCase(repository);
   });

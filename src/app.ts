@@ -1,5 +1,7 @@
 import express from 'express';
 import { CreateStudentUseCase } from './application/use-cases/create-student.use-case';
+import { GetStudentByIdUseCase } from './application/use-cases/get-student.use-case';
+import { ListStudentsUseCase } from './application/use-cases/list-students.use-case';
 import { UpdateStudentUseCase } from './application/use-cases/update-student.use-case';
 import type { StudentRepository } from './application/ports/student-repository.interface';
 import { InMemoryStudentRepository } from './infrastructure/repositories/in-memory-student.repository';
@@ -18,6 +20,8 @@ export function createApp(
     createStudentRouter(
       new CreateStudentUseCase(studentRepository),
       new UpdateStudentUseCase(studentRepository),
+      new GetStudentByIdUseCase(studentRepository),
+      new ListStudentsUseCase(studentRepository),
     ),
   );
   app.use(errorHandler);

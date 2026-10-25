@@ -23,6 +23,7 @@ describe('CreateStudentUseCase', () => {
     repository = {
       save: jest.fn(async (student: Student) => student),
       findById: jest.fn(async () => undefined),
+      findMany: jest.fn(async () => ({ items: [], total: 0 })),
     };
     useCase = new CreateStudentUseCase(repository);
   });

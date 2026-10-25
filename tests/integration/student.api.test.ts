@@ -202,6 +202,7 @@ describe('Student REST API', () => {
         throw new Error('private persistence details');
       },
       findById: async () => undefined,
+      findMany: async () => ({ items: [], total: 0 }),
     };
 
     const response = await request(createApp(repository))
@@ -239,6 +240,7 @@ describe('Student REST API', () => {
         throw new Error('private update persistence details');
       },
       findById: async () => existingStudent,
+      findMany: async () => ({ items: [], total: 0 }),
     };
 
     const response = await request(createApp(repository))

@@ -1,4 +1,5 @@
 import type { ErrorRequestHandler } from 'express';
+import { InvalidStudentQueryError } from '../../application/errors/invalid-student-query.error';
 import { StudentNotFoundError } from '../../application/errors/student-not-found.error';
 import { DomainError } from '../../domain/errors/domain.error';
 import { BadRequestError } from '../errors/bad-request.error';
@@ -14,7 +15,11 @@ export const errorHandler: ErrorRequestHandler = (
     return;
   }
 
-  if (error instanceof BadRequestError || error instanceof DomainError) {
+  if (
+    error instanceof BadRequestError ||
+    error instanceof DomainError ||
+    error instanceof InvalidStudentQueryError
+  ) {
     response.status(400).json({ error: error.message });
     return;
   }

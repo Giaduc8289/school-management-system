@@ -60,4 +60,54 @@ describe('InMemoryStudentRepository', () => {
 
     await expect(repository.findById('missing-student')).resolves.toBeUndefined();
   });
+
+  it('filters by status and case-insensitive search with stable pagination', async () => {
+    const repository = new InMemoryStudentRepository();
+    const laterStudent = makeStudent({
+      id: 'student-repository-003',
+      code: 'STU-2026-0012',
+      fullName: 'Nguyen Thi Binh',
+      email: 'binh.nguyen@example.com',
+    });
+    const earlierStudent = makeStudent({
+      id: 'student-repository-001',
+      code: 'STU-2026-0010',
+      fullName: 'Nguyen Van An',
+      email: 'an.nguyen@example.com',
+    });
+    const inactiveStudent = makeStudent({
+      id: 'student-repository-002',
+      code: 'STU-2026-0011',
+      fullName: 'Nguyen Van Cuong',
+      email: 'cuong.nguyen@example.com',
+      status: 'inactive',
+    });
+
+    await repository.save(laterStudent);
+    await repository.save(inactiveStudent);
+    await repository.save(earlierStudent);
+
+    await expect(
+      repository.findMany({
+        page: 1,
+        pageSize: 1,
+        status: 'active',
+        search: 'NGUYEN',
+      }),
+    ).resolves.toEqual({
+      items: [earlierStudent],
+      total: 2,
+    });
+    await expect(
+      repository.findMany({
+        page: 2,
+        pageSize: 1,
+        status: 'active',
+        search: 'NGUYEN',
+      }),
+    ).resolves.toEqual({
+      items: [laterStudent],
+      total: 2,
+    });
+  });
 });
