@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
-import request from 'supertest';
+import { request } from '../helpers/authenticated-request';
 import { StudentConflictError } from '../../src/application/errors/student-conflict.error';
 import { createApp } from '../../src/app';
 import type { StudentRepository } from '../../src/application/ports/student-repository.interface';

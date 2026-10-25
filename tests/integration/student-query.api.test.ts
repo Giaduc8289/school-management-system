@@ -1,4 +1,4 @@
-import request from 'supertest';
+import { request } from '../helpers/authenticated-request';
 import { createApp } from '../../src/app';
 
 describe('Student query API', () => {

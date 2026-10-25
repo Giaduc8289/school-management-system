@@ -1,4 +1,4 @@
-import request from 'supertest';
+import { request } from '../helpers/authenticated-request';
 import { StudentConflictError } from '../../src/application/errors/student-conflict.error';
 import type { StudentRepository } from '../../src/application/ports/student-repository.interface';
 import { createApp } from '../../src/app';

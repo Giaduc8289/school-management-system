@@ -1,4 +1,4 @@
-import request from 'supertest';
+import { request } from '../helpers/authenticated-request';
 import { createApp } from '../../src/app';
 import type { StudentRepository } from '../../src/application/ports/student-repository.interface';
 import { Student } from '../../src/domain/entities/student.entity';

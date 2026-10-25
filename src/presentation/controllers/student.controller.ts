@@ -1,4 +1,4 @@
-import type { Request, RequestHandler } from 'express';
+import type { RequestHandler } from 'express';
 import type { CreateStudentInput } from '../../application/use-cases/create-student.use-case';
 import type { CreateStudentUseCase } from '../../application/use-cases/create-student.use-case';
 import type { GetStudentByIdUseCase } from '../../application/use-cases/get-student.use-case';
@@ -12,10 +12,6 @@ import type {
   StudentProfile,
 } from '../../domain/entities/student.entity';
 import { BadRequestError } from '../errors/bad-request.error';
-
-interface StudentIdParams {
-  id: string;
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -93,6 +89,13 @@ function requiredString(body: Record<string, unknown>, field: string): string {
   return value;
 }
 
+function requiredStudentId(value: string | string[] | undefined): string {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new BadRequestError('Student ID must be a non-empty string.');
+  }
+  return value;
+}
+
 function isIsoDate(value: string): boolean {
   if (
     !/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))?$/.test(
@@ -161,8 +164,8 @@ export function createStudentController(
   listStudents: ListStudentsUseCase,
 ): {
   create: RequestHandler;
-  update: RequestHandler<StudentIdParams>;
-  get: RequestHandler<StudentIdParams>;
+  update: RequestHandler;
+  get: RequestHandler;
   list: RequestHandler;
 } {
   return {
@@ -172,18 +175,17 @@ export function createStudentController(
       );
       response.status(201).json(toStudentResponse(student));
     },
-    update: async (
-      request: Request<StudentIdParams>,
-      response,
-    ) => {
+    update: async (request, response) => {
       const student = await updateStudent.execute(
-        request.params.id,
+        requiredStudentId(request.params.id),
         parseStudentProfile(request.body),
       );
       response.status(200).json(toStudentResponse(student));
     },
-    get: async (request: Request<StudentIdParams>, response) => {
-      const student = await getStudent.execute(request.params.id);
+    get: async (request, response) => {
+      const student = await getStudent.execute(
+        requiredStudentId(request.params.id),
+      );
       response.status(200).json(toStudentResponse(student));
     },
     list: async (request, response) => {

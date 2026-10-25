@@ -39,6 +39,25 @@ When `DATABASE_URL` is configured, application composition uses PostgreSQL. With
 
 The running API reads `DATABASE_URL`; `TEST_DATABASE_URL` is only used by PostgreSQL integration tests and does not configure application storage. Set `DATABASE_URL` in the environment of the terminal that starts `npm start`, run the migrations, and restart the API after changing the variable.
 
+## Authentication and authorization
+
+Configure a random `JWT_SECRET` of at least 32 characters, staff email addresses, and bcrypt password hashes in the process environment. `.env.example` contains placeholders only; the application does not load it automatically. Never configure or commit plaintext production passwords.
+
+Generate a bcrypt hash for a staff password with:
+
+```powershell
+node -e "require('bcryptjs').hash(process.argv[1], 12).then(console.log)" "replace-with-a-strong-password"
+```
+
+Set the resulting hash as `AUTH_ADMIN_PASSWORD_HASH` or `AUTH_STAFF_PASSWORD_HASH`, and set the corresponding email variable. The API issues HS256 bearer access tokens that expire after 15 minutes. `POST /auth/login` accepts `{ "email": "...", "password": "..." }`.
+
+| Role | List students | View student | Create student | Update student |
+| --- | --- | --- | --- | --- |
+| `admin` | Yes | Yes | Yes | Yes |
+| `staff` | Yes | Yes | No | No |
+
+All `/students` endpoints require a bearer token. Only the explicitly approved `/health` endpoint and login endpoint are public. Authentication failures return HTTP 401 and insufficient permissions return HTTP 403, both with a JSON `{ "error": "..." }` body. Passwords are verified against salted bcrypt hashes; credentials and tokens are never logged.
+
 ## Run the student management web UI
 
 Install the root workspace dependencies once:
