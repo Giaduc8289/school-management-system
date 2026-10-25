@@ -29,6 +29,10 @@ interface StudentCountRecord {
 export class PostgresStudentRepository implements StudentRepository {
   constructor(private readonly client: StudentQueryClient) {}
 
+  async checkHealth(): Promise<void> {
+    await this.client.query('SELECT 1');
+  }
+
   async create(student: Student): Promise<Student> {
     try {
       const result = await this.client.query(

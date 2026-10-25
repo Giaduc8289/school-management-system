@@ -18,4 +18,5 @@ export interface StudentRepository {
   save(student: Student): Promise<Student>;
   findById(id: string): Promise<Student | undefined>;
   findMany(query: FindStudentsQuery): Promise<FindStudentsResult>;
+  checkHealth?(): Promise<void>;
 }

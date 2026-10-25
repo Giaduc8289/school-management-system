@@ -11,7 +11,7 @@ export class HmacAccessTokenService implements AccessTokenService {
   readonly expiresInSeconds = accessTokenLifetimeSeconds;
 
   constructor(private readonly signingKey: string) {
-    if (signingKey.length < 32) {
+    if (signingKey.trim().length < 32) {
       throw new Error('JWT_SECRET must contain at least 32 characters.');
     }
   }

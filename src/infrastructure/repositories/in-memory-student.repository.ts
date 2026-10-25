@@ -9,6 +9,8 @@ import type {
 export class InMemoryStudentRepository implements StudentRepository {
   private readonly students = new Map<string, Student>();
 
+  async checkHealth(): Promise<void> {}
+
   async create(student: Student): Promise<Student> {
     if (
       this.students.has(student.id) ||

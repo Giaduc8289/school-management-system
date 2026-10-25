@@ -1,11 +1,24 @@
 import { createApp } from './app';
 import { createConfiguredStudentRepository } from './infrastructure/repositories/student-repository.factory';
 
-const port = Number(process.env.PORT ?? 3000);
-if (!Number.isInteger(port) || port < 1 || port > 65535) {
+const portValue = process.env.PORT ?? '3000';
+const port = Number(portValue);
+if (
+  !/^\d+$/.test(portValue) ||
+  !Number.isSafeInteger(port) ||
+  port < 1 ||
+  port > 65535
+) {
   throw new Error('PORT must be an integer between 1 and 65535.');
 }
 
 createApp(createConfiguredStudentRepository()).listen(port, () => {
-  console.log(`Student API listening on port ${port}.`);
+  console.info(
+    JSON.stringify({
+      timestamp: new Date().toISOString(),
+      level: 'info',
+      message: 'server_started',
+      port,
+    }),
+  );
 });

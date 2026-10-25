@@ -39,6 +39,16 @@ When `DATABASE_URL` is configured, application composition uses PostgreSQL. With
 
 The running API reads `DATABASE_URL`; `TEST_DATABASE_URL` is only used by PostgreSQL integration tests and does not configure application storage. Set `DATABASE_URL` in the environment of the terminal that starts `npm start`, run the migrations, and restart the API after changing the variable.
 
+## API documentation and operational endpoints
+
+In non-production environments, the interactive Swagger UI is available at `http://localhost:3000/docs` and the OpenAPI 3.0 JSON specification at `http://localhost:3000/openapi.json`. Set `API_DOCS_ENABLED=false` to disable both endpoints. Documentation endpoints are always disabled when `NODE_ENV=production`, even if the flag is enabled.
+
+`GET /health/live` reports whether the process is running without querying dependencies. `GET /health/ready` checks the configured student repository and returns HTTP 503 with only `{ "status": "unavailable" }` when it cannot be reached; it does not return database details. The legacy `GET /health` endpoint remains available.
+
+Each response includes `X-Request-Id`. A valid caller-supplied ID is propagated; otherwise the API generates one. HTTP request and server-start events are written as JSON with severity levels. Request logs contain method, route template, status, duration, and correlation ID only; request bodies, authorization headers, query strings, and student details are not logged.
+
+`PORT` must be an integer from 1 through 65535. `JWT_SECRET` is required and must be at least 32 characters. Configure at least one staff email and its bcrypt password hash for runtime use. `API_DOCS_ENABLED`, when set, must be `true` or `false`. Invalid configuration prevents startup with a non-secret error. `.env.example` lists the supported environment variables and contains placeholders only.
+
 ## Authentication and authorization
 
 Configure a random `JWT_SECRET` of at least 32 characters, staff email addresses, and bcrypt password hashes in the process environment. `.env.example` contains placeholders only; the application does not load it automatically. Never configure or commit plaintext production passwords.

@@ -11,9 +11,11 @@ import { BcryptPasswordVerifier } from './infrastructure/security/bcrypt-passwor
 import { HmacAccessTokenService } from './infrastructure/security/hmac-access-token.service';
 import { errorHandler } from './presentation/middleware/error-handler';
 import { authentication } from './presentation/middleware/authentication';
-import healthRouter from './presentation/routes/health.route';
+import { createHealthRouter } from './presentation/routes/health.route';
 import { createAuthenticationRouter } from './presentation/routes/authentication.route';
 import { createStudentRouter } from './presentation/routes/student.route';
+import { requestLogger } from './presentation/middleware/request-logger';
+import { createApiDocumentationRouter } from './presentation/middleware/api-documentation';
 
 export function createApp(
   studentRepository: StudentRepository = new InMemoryStudentRepository(),
@@ -32,8 +34,14 @@ export function createApp(
     accessTokens,
   );
 
+  const apiDocumentationRouter = createApiDocumentationRouter();
+
+  app.use(requestLogger);
   app.use(express.json());
-  app.use(healthRouter);
+  app.use(createHealthRouter(studentRepository));
+  if (apiDocumentationRouter) {
+    app.use(apiDocumentationRouter);
+  }
   app.use(createAuthenticationRouter(loginStaff));
   app.use(
     createStudentRouter(
