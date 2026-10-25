@@ -1,6 +1,7 @@
 import request from 'supertest';
 import { createApp } from '../../src/app';
 import type { StudentRepository } from '../../src/application/ports/student-repository.interface';
+import { Student } from '../../src/domain/entities/student.entity';
 import { InMemoryStudentRepository } from '../../src/infrastructure/repositories/in-memory-student.repository';
 
 describe('Student REST API', () => {
@@ -109,6 +110,46 @@ describe('Student REST API', () => {
     });
   });
 
+  it.each(['id', 'code', 'fullName', 'email', 'dateOfBirth'] as const)(
+    'returns HTTP 400 when the creation field "%s" is missing',
+    async (field) => {
+      const incompleteStudent: Partial<typeof validStudent> = {
+        ...validStudent,
+      };
+      delete incompleteStudent[field];
+
+      const response = await request(makeApp())
+        .post('/students')
+        .send(incompleteStudent);
+
+      expect(response.status).toBe(400);
+      expect(response.body).toEqual({ error: expect.any(String) });
+    },
+  );
+
+  it.each(['fullName', 'email'] as const)(
+    'returns HTTP 400 when the update field "%s" is missing',
+    async (field) => {
+      const app = makeApp();
+      await request(app).post('/students').send(validStudent);
+      const profile: Partial<{
+        fullName: string;
+        email: string;
+      }> = {
+        fullName: 'Updated Name',
+        email: 'updated@example.com',
+      };
+      delete profile[field];
+
+      const response = await request(app)
+        .put(`/students/${validStudent.id}`)
+        .send(profile);
+
+      expect(response.status).toBe(400);
+      expect(response.body).toEqual({ error: expect.any(String) });
+    },
+  );
+
   it('returns HTTP 400 when the date of birth cannot be parsed', async () => {
     const response = await request(makeApp())
       .post('/students')
@@ -171,6 +212,43 @@ describe('Student REST API', () => {
     expect(response.body).toEqual({ error: 'Internal server error.' });
     expect(JSON.stringify(response.body)).not.toContain(
       'private persistence details',
+    );
+  });
+
+  it('keeps the default repository isolated between app instances', async () => {
+    const firstApp = createApp();
+    const secondApp = createApp();
+    await request(firstApp).post('/students').send(validStudent);
+
+    const response = await request(secondApp)
+      .put(`/students/${validStudent.id}`)
+      .send({ fullName: 'Updated Name', email: 'updated@example.com' });
+
+    expect(response.status).toBe(404);
+    expect(response.body).toEqual({ error: expect.any(String) });
+  });
+
+  it('returns a generic HTTP 500 response for unexpected update errors', async () => {
+    const existingStudent = new Student({
+      ...validStudent,
+      dateOfBirth: new Date(validStudent.dateOfBirth),
+      status: 'active',
+    });
+    const repository: StudentRepository = {
+      save: async () => {
+        throw new Error('private update persistence details');
+      },
+      findById: async () => existingStudent,
+    };
+
+    const response = await request(createApp(repository))
+      .put(`/students/${validStudent.id}`)
+      .send({ fullName: 'Updated Name', email: 'updated@example.com' });
+
+    expect(response.status).toBe(500);
+    expect(response.body).toEqual({ error: 'Internal server error.' });
+    expect(JSON.stringify(response.body)).not.toContain(
+      'private update persistence details',
     );
   });
 });
