@@ -37,6 +37,8 @@ The API listens on port `3000` by default. Set `PORT` to use another port. Check
 
 When `DATABASE_URL` is configured, application composition uses PostgreSQL. Without it, the application uses an isolated in-memory repository for local development and tests; data in that mode is lost when the process exits. A configured database connection failure is surfaced and does not fall back to in-memory storage.
 
+The running API reads `DATABASE_URL`; `TEST_DATABASE_URL` is only used by PostgreSQL integration tests and does not configure application storage. Set `DATABASE_URL` in the environment of the terminal that starts `npm start`, run the migrations, and restart the API after changing the variable.
+
 ## Run the student management web UI
 
 Install the root workspace dependencies once:

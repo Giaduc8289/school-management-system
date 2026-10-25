@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import request from 'supertest';
+import { StudentConflictError } from '../../src/application/errors/student-conflict.error';
 import { createApp } from '../../src/app';
 import type { StudentRepository } from '../../src/application/ports/student-repository.interface';
 import { Student } from '../../src/domain/entities/student.entity';
@@ -26,6 +27,7 @@ interface PostgresRepositoryConstructor {
 }
 
 const describeWithPostgres = process.env.TEST_DATABASE_URL ? describe : describe.skip;
+let studentCodeSequence = 1000;
 
 describeWithPostgres('PostgresStudentRepository integration', () => {
   let adminPool: QueryClient | undefined;
@@ -91,7 +93,9 @@ describeWithPostgres('PostgresStudentRepository integration', () => {
   } = {}): Student {
     return new Student({
       id: overrides.id ?? `student-${randomUUID()}`,
-      code: overrides.code ?? 'STU-2026-0099',
+      code:
+        overrides.code ??
+        `STU-2026-${String(studentCodeSequence++).padStart(4, '0')}`,
       fullName: overrides.fullName ?? 'Nguyen Van An',
       email: overrides.email ?? 'an.nguyen@example.com',
       dateOfBirth: new Date('2012-05-15T00:00:00.000Z'),
@@ -128,6 +132,7 @@ describeWithPostgres('PostgresStudentRepository integration', () => {
     const original = makeStudent({ id });
     const updated = makeStudent({
       id,
+      code: original.code,
       fullName: 'Nguyen Thi Binh',
       email: 'binh.nguyen@example.com',
       status: 'inactive',
@@ -207,5 +212,89 @@ describeWithPostgres('PostgresStudentRepository integration', () => {
       fullName: student.fullName,
       email: student.email,
     });
+  });
+
+  it('rejects a duplicate student ID instead of overwriting identity fields', async () => {
+    const original = makeStudent();
+    await repository.create(original);
+    const duplicateId = makeStudent({
+      id: original.id,
+      fullName: 'Different Student',
+    });
+
+    await expect(repository.create(duplicateId)).rejects.toBeInstanceOf(
+      StudentConflictError,
+    );
+    await expect(repository.findById(original.id)).resolves.toMatchObject({
+      code: original.code,
+      fullName: original.fullName,
+    });
+  });
+
+  it('rejects a duplicate student code while preserving both distinct IDs', async () => {
+    const original = makeStudent();
+    await repository.create(original);
+    const duplicateCode = makeStudent({ code: original.code });
+
+    await expect(repository.create(duplicateCode)).rejects.toBeInstanceOf(
+      StudentConflictError,
+    );
+    await expect(repository.findById(original.id)).resolves.toMatchObject({
+      code: original.code,
+    });
+    await expect(repository.findById(duplicateCode.id)).resolves.toBeUndefined();
+  });
+
+  it('allows only one of two concurrent writes with the same student code', async () => {
+    const duplicateCode = `STU-2026-${String(studentCodeSequence++).padStart(4, '0')}`;
+    const outcomes = await Promise.allSettled([
+      repository.create(makeStudent({ code: duplicateCode })),
+      repository.create(makeStudent({ code: duplicateCode })),
+    ]);
+    const fulfilled = outcomes.filter(
+      (outcome) => outcome.status === 'fulfilled',
+    );
+    const rejected = outcomes.filter(
+      (outcome) => outcome.status === 'rejected',
+    );
+
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]).toMatchObject({
+      status: 'rejected',
+      reason: expect.any(StudentConflictError),
+    });
+
+    const result = await repository.findMany({
+      page: 1,
+      pageSize: 10,
+      status: undefined,
+      search: duplicateCode,
+    });
+    expect(result.total).toBe(1);
+  });
+
+  it('returns HTTP 409 without database details for a persistent duplicate code', async () => {
+    const original = makeStudent();
+    await repository.save(original);
+    const duplicate = makeStudent({ code: original.code });
+
+    const response = await request(createApp(repository))
+      .post('/students')
+      .send({
+        id: duplicate.id,
+        code: duplicate.code,
+        fullName: duplicate.fullName,
+        email: duplicate.email,
+        dateOfBirth: duplicate.dateOfBirth.toISOString(),
+      });
+
+    expect(response.status).toBe(409);
+    expect(response.body).toEqual({
+      error: 'A student with this ID or code already exists.',
+    });
+    expect(JSON.stringify(response.body)).not.toMatch(
+      /sql|schema|postgres|constraint/i,
+    );
   });
 });

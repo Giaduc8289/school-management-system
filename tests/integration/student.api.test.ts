@@ -198,6 +198,9 @@ describe('Student REST API', () => {
 
   it('returns a generic HTTP 500 response for unexpected persistence errors', async () => {
     const repository: StudentRepository = {
+      create: async () => {
+        throw new Error('private persistence details');
+      },
       save: async () => {
         throw new Error('private persistence details');
       },
@@ -236,6 +239,9 @@ describe('Student REST API', () => {
       status: 'active',
     });
     const repository: StudentRepository = {
+      create: async () => {
+        throw new Error('private update persistence details');
+      },
       save: async () => {
         throw new Error('private update persistence details');
       },

@@ -1,4 +1,5 @@
 import type { Student } from '../../domain/entities/student.entity';
+import { StudentConflictError } from '../../application/errors/student-conflict.error';
 import type {
   FindStudentsQuery,
   FindStudentsResult,
@@ -8,7 +9,29 @@ import type {
 export class InMemoryStudentRepository implements StudentRepository {
   private readonly students = new Map<string, Student>();
 
+  async create(student: Student): Promise<Student> {
+    if (
+      this.students.has(student.id) ||
+      [...this.students.values()].some(
+        (existing) => existing.code === student.code,
+      )
+    ) {
+      throw new StudentConflictError();
+    }
+
+    this.students.set(student.id, student);
+    return student;
+  }
+
   async save(student: Student): Promise<Student> {
+    const duplicateCode = [...this.students.values()].some(
+      (existing) =>
+        existing.id !== student.id && existing.code === student.code,
+    );
+    if (duplicateCode) {
+      throw new StudentConflictError();
+    }
+
     this.students.set(student.id, student);
     return student;
   }

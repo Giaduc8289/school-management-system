@@ -22,6 +22,7 @@ describe('UpdateStudentUseCase', () => {
       status: 'inactive',
     });
     repository = {
+      create: jest.fn(async (createdStudent: Student) => createdStudent),
       save: jest.fn(async (savedStudent: Student) => savedStudent),
       findById: jest.fn(async (id: string) =>
         id === studentId ? student : undefined,

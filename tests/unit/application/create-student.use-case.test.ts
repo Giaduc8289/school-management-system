@@ -21,6 +21,7 @@ describe('CreateStudentUseCase', () => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date('2026-10-24T12:00:00.000Z'));
     repository = {
+      create: jest.fn(async (student: Student) => student),
       save: jest.fn(async (student: Student) => student),
       findById: jest.fn(async () => undefined),
       findMany: jest.fn(async () => ({ items: [], total: 0 })),
@@ -40,8 +41,8 @@ describe('CreateStudentUseCase', () => {
       ...validInput,
       status: 'active',
     });
-    expect(repository.save).toHaveBeenCalledTimes(1);
-    expect(repository.save).toHaveBeenCalledWith(createdStudent);
+    expect(repository.create).toHaveBeenCalledTimes(1);
+    expect(repository.create).toHaveBeenCalledWith(createdStudent);
   });
 
   it.each([
@@ -56,12 +57,12 @@ describe('CreateStudentUseCase', () => {
       useCase.execute({ ...validInput, ...overrides }),
     ).rejects.toThrow();
 
-    expect(repository.save).not.toHaveBeenCalled();
+    expect(repository.create).not.toHaveBeenCalled();
   });
 
   it('propagates persistence errors', async () => {
     const persistenceError = new Error('Persistence failed');
-    repository.save = jest.fn(async () => {
+    repository.create = jest.fn(async () => {
       throw persistenceError;
     });
 

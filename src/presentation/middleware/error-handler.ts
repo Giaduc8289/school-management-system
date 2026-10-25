@@ -1,5 +1,6 @@
 import type { ErrorRequestHandler } from 'express';
 import { InvalidStudentQueryError } from '../../application/errors/invalid-student-query.error';
+import { StudentConflictError } from '../../application/errors/student-conflict.error';
 import { StudentNotFoundError } from '../../application/errors/student-not-found.error';
 import { DomainError } from '../../domain/errors/domain.error';
 import { BadRequestError } from '../errors/bad-request.error';
@@ -10,6 +11,11 @@ export const errorHandler: ErrorRequestHandler = (
   response,
   _next,
 ): void => {
+  if (error instanceof StudentConflictError) {
+    response.status(409).json({ error: error.message });
+    return;
+  }
+
   if (error instanceof StudentNotFoundError) {
     response.status(404).json({ error: error.message });
     return;

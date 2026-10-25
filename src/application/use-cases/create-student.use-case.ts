@@ -18,6 +18,6 @@ export class CreateStudentUseCase {
       status: 'active',
     });
 
-    return this.studentRepository.save(student);
+    return this.studentRepository.create(student);
   }
 }

@@ -1,4 +1,5 @@
 import { Student } from '../../../src/domain/entities/student.entity';
+import { StudentConflictError } from '../../../src/application/errors/student-conflict.error';
 import {
   PostgresStudentRepository,
   type StudentQueryClient,
@@ -15,7 +16,7 @@ describe('PostgresStudentRepository', () => {
   });
 
   it('writes all domain fields and returns the database row as a Student', async () => {
-    const query = jest.fn(async () => ({
+    const query = jest.fn(async (_statement: string) => ({
       rows: [
         {
           id: student.id,
@@ -133,5 +134,81 @@ describe('PostgresStudentRepository', () => {
     await expect(repository.save(student)).rejects.toThrow(
       'The database did not return the saved student.',
     );
+  });
+
+  it.each([
+    ['students_pkey', 'student ID'],
+    ['students_code_key', 'student code'],
+  ])(
+    'maps the unique constraint for %s to a typed student conflict',
+    async (constraint) => {
+      const databaseError = Object.assign(
+        new Error('duplicate key value violates unique constraint'),
+        { code: '23505', constraint },
+      );
+      const repository = new PostgresStudentRepository({
+        query: async () => {
+          throw databaseError;
+        },
+      } as StudentQueryClient);
+
+      await expect(repository.create(student)).rejects.toBeInstanceOf(
+        StudentConflictError,
+      );
+      await expect(repository.create(student)).rejects.toThrow(
+        'A student with this ID or code already exists.',
+      );
+    },
+  );
+
+  it('does not map unrelated database failures to a student conflict', async () => {
+    const databaseError = Object.assign(new Error('database unavailable'), {
+      code: '08006',
+    });
+    const repository = new PostgresStudentRepository({
+      query: async () => {
+        throw databaseError;
+      },
+    } as StudentQueryClient);
+
+    await expect(repository.save(student)).rejects.toBe(databaseError);
+  });
+
+  it('does not map unique violations from unrelated constraints', async () => {
+    const databaseError = Object.assign(
+      new Error('duplicate value in another table'),
+      { code: '23505', constraint: 'audit_log_pkey' },
+    );
+    const repository = new PostgresStudentRepository({
+      query: async () => {
+        throw databaseError;
+      },
+    } as StudentQueryClient);
+
+    await expect(repository.create(student)).rejects.toBe(databaseError);
+  });
+
+  it('uses an insert that cannot overwrite an existing identity', async () => {
+    const query = jest.fn(async (_statement: string) => ({
+      rows: [
+        {
+          id: student.id,
+          code: student.code,
+          full_name: student.fullName,
+          email: student.email,
+          date_of_birth: student.dateOfBirth,
+          status: student.status,
+        },
+      ],
+    }));
+    const repository = new PostgresStudentRepository({
+      query,
+    } as StudentQueryClient);
+
+    await repository.create(student);
+
+    expect(query.mock.calls[0][0]).toContain('INSERT INTO students');
+    expect(query.mock.calls[0][0]).not.toContain('ON CONFLICT');
+    expect(query.mock.calls[0][0]).not.toContain('DO UPDATE');
   });
 });

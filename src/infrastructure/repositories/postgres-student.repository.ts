@@ -1,4 +1,5 @@
 import { Student } from '../../domain/entities/student.entity';
+import { StudentConflictError } from '../../application/errors/student-conflict.error';
 import type {
   FindStudentsQuery,
   FindStudentsResult,
@@ -28,34 +29,86 @@ interface StudentCountRecord {
 export class PostgresStudentRepository implements StudentRepository {
   constructor(private readonly client: StudentQueryClient) {}
 
+  async create(student: Student): Promise<Student> {
+    try {
+      const result = await this.client.query(
+        `INSERT INTO students (
+           id, code, full_name, email, date_of_birth, status
+         )
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING id, code, full_name, email, date_of_birth, status`,
+        this.toValues(student),
+      );
+
+      const record = result.rows[0];
+      if (!record) {
+        throw new Error('The database did not return the created student.');
+      }
+      return this.toStudent(record);
+    } catch (error) {
+      if (this.isStudentUniqueViolation(error)) {
+        throw new StudentConflictError();
+      }
+      throw error;
+    }
+  }
+
   async save(student: Student): Promise<Student> {
-    const result = await this.client.query(
-      `INSERT INTO students (
-         id, code, full_name, email, date_of_birth, status
-       )
-       VALUES ($1, $2, $3, $4, $5, $6)
-       ON CONFLICT (id) DO UPDATE SET
-         code = EXCLUDED.code,
-         full_name = EXCLUDED.full_name,
-         email = EXCLUDED.email,
-         date_of_birth = EXCLUDED.date_of_birth,
-         status = EXCLUDED.status
-       RETURNING id, code, full_name, email, date_of_birth, status`,
-      [
-        student.id,
-        student.code,
-        student.fullName,
-        student.email,
-        student.dateOfBirth,
-        student.status,
-      ],
-    );
+    let result;
+    try {
+      result = await this.client.query(
+        `INSERT INTO students (
+           id, code, full_name, email, date_of_birth, status
+         )
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (id) DO UPDATE SET
+           code = EXCLUDED.code,
+           full_name = EXCLUDED.full_name,
+           email = EXCLUDED.email,
+           date_of_birth = EXCLUDED.date_of_birth,
+           status = EXCLUDED.status
+         RETURNING id, code, full_name, email, date_of_birth, status`,
+        this.toValues(student),
+      );
+    } catch (error) {
+      if (this.isStudentUniqueViolation(error)) {
+        throw new StudentConflictError();
+      }
+      throw error;
+    }
 
     const record = result.rows[0];
     if (!record) {
       throw new Error('The database did not return the saved student.');
     }
     return this.toStudent(record);
+  }
+
+  private toValues(student: Student): unknown[] {
+    return [
+      student.id,
+      student.code,
+      student.fullName,
+      student.email,
+      student.dateOfBirth,
+      student.status,
+    ];
+  }
+
+  private isStudentUniqueViolation(error: unknown): boolean {
+    if (typeof error !== 'object' || error === null) {
+      return false;
+    }
+
+    const databaseError = error as {
+      code?: unknown;
+      constraint?: unknown;
+    };
+    return (
+      databaseError.code === '23505' &&
+      (databaseError.constraint === 'students_pkey' ||
+        databaseError.constraint === 'students_code_key')
+    );
   }
 
   async findById(id: string): Promise<Student | undefined> {

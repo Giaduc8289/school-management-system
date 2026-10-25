@@ -1,4 +1,5 @@
 import { Student } from '../../src/domain/entities/student.entity';
+import { StudentConflictError } from '../../src/application/errors/student-conflict.error';
 import { InMemoryStudentRepository } from '../../src/infrastructure/repositories/in-memory-student.repository';
 
 describe('InMemoryStudentRepository', () => {
@@ -59,6 +60,35 @@ describe('InMemoryStudentRepository', () => {
     const repository = new InMemoryStudentRepository();
 
     await expect(repository.findById('missing-student')).resolves.toBeUndefined();
+  });
+
+  it('rejects a new student with a duplicate ID or code', async () => {
+    const repository = new InMemoryStudentRepository();
+    const original = makeStudent({
+      id: 'student-unique-001',
+      code: 'STU-2026-0020',
+    });
+    await repository.create(original);
+
+    await expect(
+      repository.create(
+        makeStudent({
+          id: original.id,
+          code: 'STU-2026-0021',
+        }),
+      ),
+    ).rejects.toBeInstanceOf(StudentConflictError);
+    await expect(
+      repository.create(
+        makeStudent({
+          id: 'student-unique-002',
+          code: original.code,
+        }),
+      ),
+    ).rejects.toBeInstanceOf(StudentConflictError);
+
+    await expect(repository.findById(original.id)).resolves.toBe(original);
+    await expect(repository.findById('student-unique-002')).resolves.toBeUndefined();
   });
 
   it('filters by status and case-insensitive search with stable pagination', async () => {

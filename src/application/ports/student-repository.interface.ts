@@ -14,6 +14,7 @@ export interface FindStudentsResult {
 }
 
 export interface StudentRepository {
+  create(student: Student): Promise<Student>;
   save(student: Student): Promise<Student>;
   findById(id: string): Promise<Student | undefined>;
   findMany(query: FindStudentsQuery): Promise<FindStudentsResult>;
