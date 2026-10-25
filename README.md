@@ -120,3 +120,18 @@ npx jest tests/integration/postgres-student.repository.test.ts --runInBand
 ```
 
 When `TEST_DATABASE_URL` is not set, PostgreSQL integration tests are skipped. Other tests use the in-memory repository or an injected repository.
+
+## CI, release, and staging deployment
+
+Work on a feature branch and open a pull request to `main`; do not push unreviewed changes directly to `main`. A pull request and every push to `main` run the GitHub Actions CI workflow. CI installs the committed npm lockfile, type-checks and builds the backend, runs the full Jest suite with the global 80% line-coverage threshold, exercises PostgreSQL integration tests against an isolated PostgreSQL service, and builds/tests the frontend. Merge only after all required checks pass.
+
+Staging deployment is a separate, manual release action. In GitHub Actions, run **Deploy staging** with a branch, tag, or commit that is already an ancestor of `main`. The workflow builds immutable SHA-tagged API, migration, and frontend images, publishes them to GHCR, applies database migrations, updates the Docker Compose services, and verifies `/health/ready` both on the staging host and at the public staging URL. It deploys only to the protected `staging` GitHub Environment; there is no automatic production deployment.
+
+Configure these secrets in the GitHub `staging` Environment:
+
+- `STAGING_SSH_HOST`, `STAGING_SSH_USER`, `STAGING_SSH_PRIVATE_KEY`, and pinned `STAGING_SSH_KNOWN_HOSTS` for the Linux Docker Compose host.
+- `STAGING_BASE_URL`, the HTTPS base URL used for the external readiness check.
+
+Grant the workflow's `GITHUB_TOKEN` permission to publish packages in GHCR. On the staging host, authenticate Docker to GHCR with a dedicated read-only package token, create `~/school-management-staging/.env` with `DATABASE_URL`, `JWT_SECRET`, and staff email/bcrypt hash values, and retain that file outside the repository with mode `0600`. Install Docker Engine and the Docker Compose plugin. The deploy workflow copies `compose.staging.yml` into that directory; ports `8080` (frontend and API reverse proxy) and outbound HTTPS must be available.
+
+If a new image fails to start or the host readiness check fails, the deployment workflow restores the previously running API and frontend image versions. To roll back manually, select the previous immutable image tags in `compose.staging.yml`'s `API_IMAGE` and `FRONTEND_IMAGE` environment, then run `docker compose -f compose.staging.yml up -d` from the staging directory and verify `https://<staging-host>/health/ready`. Database schema changes must be backward-compatible during a release; take a database backup before migrations, and restore that backup separately if a migration itself must be rolled back. This is the staging rollback procedure. Never put deployment keys, registry tokens, connection strings, or application secrets in source control.

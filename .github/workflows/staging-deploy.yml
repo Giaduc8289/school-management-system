@@ -1,0 +1,198 @@
+name: Deploy staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Reviewed branch, tag, or commit to deploy
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: staging-deployment
+  cancel-in-progress: false
+
+jobs:
+  build-and-publish:
+    name: Build and publish staging images
+    runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ steps.revision.outputs.image-tag }}
+      image-prefix: ${{ steps.image.outputs.image-prefix }}
+    steps:
+      - name: Check out requested ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Require a reviewed commit on main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "Only commits already merged into main can be deployed to staging." >&2
+            exit 1
+          fi
+
+      - name: Resolve immutable image tag
+        id: revision
+        shell: bash
+        run: echo "image-tag=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Normalize GHCR image prefix
+        id: image
+        shell: bash
+        run: echo "image-prefix=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Authenticate to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          target: runtime
+          push: true
+          tags: ${{ steps.image.outputs.image-prefix }}-api:${{ steps.revision.outputs.image-tag }}
+
+      - name: Build and publish frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: frontend/Dockerfile
+          push: true
+          tags: ${{ steps.image.outputs.image-prefix }}-frontend:${{ steps.revision.outputs.image-tag }}
+
+      - name: Build and publish migration image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          target: migration
+          push: true
+          tags: ${{ steps.image.outputs.image-prefix }}-migration:${{ steps.revision.outputs.image-tag }}
+
+  deploy:
+    name: Deploy and verify staging
+    needs: build-and-publish
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      contents: read
+      packages: read
+    env:
+      IMAGE_PREFIX: ${{ needs.build-and-publish.outputs.image-prefix }}
+      STAGING_SSH_HOST: ${{ secrets.STAGING_SSH_HOST }}
+      STAGING_SSH_USER: ${{ secrets.STAGING_SSH_USER }}
+      STAGING_SSH_PRIVATE_KEY: ${{ secrets.STAGING_SSH_PRIVATE_KEY }}
+      STAGING_SSH_KNOWN_HOSTS: ${{ secrets.STAGING_SSH_KNOWN_HOSTS }}
+      STAGING_BASE_URL: ${{ secrets.STAGING_BASE_URL }}
+      DEPLOY_REF: ${{ needs.build-and-publish.outputs.image-tag }}
+    steps:
+      - name: Check out deployment configuration
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Validate staging environment secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in STAGING_SSH_HOST STAGING_SSH_USER STAGING_SSH_PRIVATE_KEY STAGING_SSH_KNOWN_HOSTS STAGING_BASE_URL; do
+            if [[ -z "${!name}" ]]; then
+              echo "Required staging environment secret $name is not configured." >&2
+              exit 1
+            fi
+          done
+          if [[ "$STAGING_BASE_URL" != https://* ]]; then
+            echo "STAGING_BASE_URL must use HTTPS." >&2
+            exit 1
+          fi
+          if [[ ! "$DEPLOY_REF" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "The resolved deployment revision is not a commit SHA." >&2
+            exit 1
+          fi
+
+      - name: Configure pinned staging SSH host key
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$STAGING_SSH_PRIVATE_KEY" > "$HOME/.ssh/staging"
+          chmod 600 "$HOME/.ssh/staging"
+          printf '%s\n' "$STAGING_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Copy Compose release configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i "$HOME/.ssh/staging" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$STAGING_SSH_USER@$STAGING_SSH_HOST" 'mkdir -p "$HOME/school-management-staging"'
+          scp -i "$HOME/.ssh/staging" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes compose.staging.yml "$STAGING_SSH_USER@$STAGING_SSH_HOST:school-management-staging/compose.staging.yml"
+
+      - name: Apply database migrations and deploy with automatic image rollback
+        shell: bash
+        env:
+          API_IMAGE: ${{ env.IMAGE_PREFIX }}-api:${{ needs.build-and-publish.outputs.image-tag }}
+          FRONTEND_IMAGE: ${{ env.IMAGE_PREFIX }}-frontend:${{ needs.build-and-publish.outputs.image-tag }}
+          MIGRATION_IMAGE: ${{ env.IMAGE_PREFIX }}-migration:${{ needs.build-and-publish.outputs.image-tag }}
+        run: |
+          set -euo pipefail
+          ssh -i "$HOME/.ssh/staging" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$STAGING_SSH_USER@$STAGING_SSH_HOST" \
+            "API_IMAGE='$API_IMAGE' FRONTEND_IMAGE='$FRONTEND_IMAGE' MIGRATION_IMAGE='$MIGRATION_IMAGE' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "$HOME/school-management-staging"
+          test -f .env
+          test -f compose.staging.yml
+
+          compose() {
+            API_IMAGE="$1" FRONTEND_IMAGE="$2" MIGRATION_IMAGE="$3" docker compose -f compose.staging.yml "${@:4}"
+          }
+
+          previous_api_image="$(docker inspect --format '{{.Config.Image}}' school-management-api 2>/dev/null || true)"
+          previous_frontend_image="$(docker inspect --format '{{.Config.Image}}' school-management-frontend 2>/dev/null || true)"
+          candidate_api_image="$API_IMAGE"
+          candidate_frontend_image="$FRONTEND_IMAGE"
+          candidate_migration_image="$MIGRATION_IMAGE"
+
+          compose "$candidate_api_image" "$candidate_frontend_image" "$candidate_migration_image" pull
+          compose "$candidate_api_image" "$candidate_frontend_image" "$candidate_migration_image" run --rm migrate npm run db:migrate
+
+          rollback_images() {
+            if [[ -n "$previous_api_image" && -n "$previous_frontend_image" ]]; then
+              compose "$previous_api_image" "$previous_frontend_image" "$candidate_migration_image" up -d --remove-orphans
+            else
+              compose "$candidate_api_image" "$candidate_frontend_image" "$candidate_migration_image" down
+            fi
+          }
+
+          if ! compose "$candidate_api_image" "$candidate_frontend_image" "$candidate_migration_image" up -d --remove-orphans; then
+            rollback_images
+            exit 1
+          fi
+
+          if ! curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 5 http://127.0.0.1:8080/health/ready; then
+            rollback_images
+            exit 1
+          fi
+          REMOTE
+
+      - name: Verify public staging readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 5 "$STAGING_BASE_URL/health/ready"

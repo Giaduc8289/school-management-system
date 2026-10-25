@@ -1,0 +1,46 @@
+services:
+  api:
+    image: ${API_IMAGE:?API_IMAGE must be provided}
+    container_name: school-management-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      API_DOCS_ENABLED: "false"
+    expose:
+      - "3000"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/health/ready').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  frontend:
+    image: ${FRONTEND_IMAGE:?FRONTEND_IMAGE must be provided}
+    container_name: school-management-frontend
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  migrate:
+    image: ${MIGRATION_IMAGE:?MIGRATION_IMAGE must be provided}
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+    profiles:
+      - migration
+    command:
+      - npm
+      - run
+      - db:migrate

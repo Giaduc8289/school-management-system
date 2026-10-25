@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'frontend/**'
+      - 'tasks/**'
+      - 'Dockerfile'
+      - 'compose.staging.yml'
+      - 'jest.config.ts'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'playwright.config.ts'
+      - 'tsconfig.json'
+      - 'README.md'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'frontend/**'
+      - 'tasks/**'
+      - 'Dockerfile'
+      - 'compose.staging.yml'
+      - 'jest.config.ts'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'playwright.config.ts'
+      - 'tsconfig.json'
+      - 'README.md'
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Backend and frontend quality gates
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: school_management_test
+          POSTGRES_USER: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d school_management_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      TEST_DATABASE_URL: postgresql://postgres@localhost:5432/school_management_test
+      JWT_SECRET: ci-only-signing-key-with-at-least-32-characters
+      NODE_ENV: test
+    steps:
+      - name: Check out reviewed source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Type-check backend
+        run: npm run typecheck
+
+      - name: Build backend
+        run: npm run build
+
+      - name: Run backend tests and coverage gate
+        run: npm test -- --runInBand --coverage
+
+      - name: Verify PostgreSQL integration tests use the isolated CI database
+        run: npx jest tests/integration/postgres-student.repository.test.ts --runInBand
+
+      - name: Build frontend
+        run: npm run build:frontend
+
+      - name: Verify the frontend workspace build entry point
+        run: npm --workspace frontend run build
+
+      - name: Run frontend tests
+        run: npm --workspace frontend run test
