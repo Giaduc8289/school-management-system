@@ -135,3 +135,16 @@ Configure these secrets in the GitHub `staging` Environment:
 Grant the workflow's `GITHUB_TOKEN` permission to publish packages in GHCR. On the staging host, authenticate Docker to GHCR with a dedicated read-only package token, create `~/school-management-staging/.env` with `DATABASE_URL`, `JWT_SECRET`, and staff email/bcrypt hash values, and retain that file outside the repository with mode `0600`. Install Docker Engine and the Docker Compose plugin. The deploy workflow copies `compose.staging.yml` into that directory; ports `8080` (frontend and API reverse proxy) and outbound HTTPS must be available.
 
 If a new image fails to start or the host readiness check fails, the deployment workflow restores the previously running API and frontend image versions. To roll back manually, select the previous immutable image tags in `compose.staging.yml`'s `API_IMAGE` and `FRONTEND_IMAGE` environment, then run `docker compose -f compose.staging.yml up -d` from the staging directory and verify `https://<staging-host>/health/ready`. Database schema changes must be backward-compatible during a release; take a database backup before migrations, and restore that backup separately if a migration itself must be rolled back. This is the staging rollback procedure. Never put deployment keys, registry tokens, connection strings, or application secrets in source control.
+
+## Next planned tasks
+
+The following tasks extend the completed setup through staging verification, automated browser testing, and additional security checks:
+
+| Priority | Task | Focus |
+| --- | --- | --- |
+| P0 | [TASK-013: Staging Validation and Recovery Drill](./tasks/task-013-staging-validation-and-recovery.md) | Verify a real staging release, image rollback, and database backup/restore procedure. |
+| P1 | [TASK-014: End-to-End Tests in CI](./tasks/task-014-e2e-tests-in-ci.md) | Run the Playwright student-management flow against isolated services in CI. |
+| P1 | [TASK-015: API Security Hardening](./tasks/task-015-api-security-hardening.md) | Add secure HTTP defaults, request size limits, and rate limiting with tests. |
+| P2 | [TASK-016: Dependency and Image Security Scanning](./tasks/task-016-dependency-and-image-security-scanning.md) | Gate CI and staging releases on dependency and container image scan results. |
+
+TASK-013 should be completed before treating staging as a verified release environment. TASK-014, TASK-015, and TASK-016 can proceed independently once their listed dependencies are satisfied.
