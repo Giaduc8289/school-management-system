@@ -106,7 +106,9 @@ npm run build:frontend
 npm run test:e2e
 ```
 
-UI tests run as part of `npm test`. The end-to-end smoke test starts the API and Vite development server automatically. Install the Playwright Chromium browser once before the first E2E run:
+UI tests run as part of `npm test`. The end-to-end smoke test starts the API and Vite development server automatically. Playwright starts the API in test mode with test-only credentials and a signing key; with `DATABASE_URL` unset it uses the in-memory repository. The test creates synthetic student records only. CI installs Chromium and its system dependencies and runs this browser test against those local services; it does not connect to staging or production. Playwright screenshots, traces, and videos are disabled so diagnostic artifacts cannot capture authentication headers or page data. On a failed CI run, the HTML report is uploaded for seven days.
+
+Install the Playwright Chromium browser once before the first local E2E run:
 
 ```powershell
 npx playwright install chromium
