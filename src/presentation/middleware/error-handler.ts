@@ -39,5 +39,15 @@ export const errorHandler: ErrorRequestHandler = (
     return;
   }
 
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'status' in error &&
+    error.status === 413
+  ) {
+    response.status(413).json({ error: 'Request body is too large.' });
+    return;
+  }
+
   response.status(500).json({ error: 'Internal server error.' });
 };

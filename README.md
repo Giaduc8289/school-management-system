@@ -47,6 +47,10 @@ In non-production environments, the interactive Swagger UI is available at `http
 
 Each response includes `X-Request-Id`. A valid caller-supplied ID is propagated; otherwise the API generates one. HTTP request and server-start events are written as JSON with severity levels. Request logs contain method, route template, status, duration, and correlation ID only; request bodies, authorization headers, query strings, and student details are not logged.
 
+The API sets Helmet security headers, disables Express identification, and accepts JSON request bodies up to 1 MiB. Larger bodies return HTTP 413 with a generic JSON error. Login is limited to 5 requests per client IP per 15 minutes; student and API documentation routes are limited to 100 requests per client IP per 15 minutes. Rate-limit responses are HTTP 429 JSON. Limits use an in-memory store per application process, so counters reset on restart and are not shared across replicas.
+
+Express proxy trust is disabled by default. Forwarded IP headers are therefore not used to distinguish clients; behind a reverse proxy, clients may share the proxy's address and rate-limit bucket. Do not enable `trust proxy` as a blanket setting: only configure the exact trusted proxy addresses or hop count after confirming the proxy strips/replaces client-supplied forwarding headers. For multiple API replicas, use a shared rate-limit store if a consistent fleet-wide limit is required.
+
 `PORT` must be an integer from 1 through 65535. `JWT_SECRET` is required and must be at least 32 characters. Configure at least one staff email and its bcrypt password hash for runtime use. `API_DOCS_ENABLED`, when set, must be `true` or `false`. Invalid configuration prevents startup with a non-secret error. `.env.example` lists the supported environment variables and contains placeholders only.
 
 ## Authentication and authorization

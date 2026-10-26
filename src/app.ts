@@ -1,4 +1,5 @@
 import express from 'express';
+import helmet from 'helmet';
 import { CreateStudentUseCase } from './application/use-cases/create-student.use-case';
 import { GetStudentByIdUseCase } from './application/use-cases/get-student.use-case';
 import { ListStudentsUseCase } from './application/use-cases/list-students.use-case';
@@ -16,11 +17,13 @@ import { createAuthenticationRouter } from './presentation/routes/authentication
 import { createStudentRouter } from './presentation/routes/student.route';
 import { requestLogger } from './presentation/middleware/request-logger';
 import { createApiDocumentationRouter } from './presentation/middleware/api-documentation';
+import { createApiRateLimits } from './presentation/middleware/api-rate-limits';
 
 export function createApp(
   studentRepository: StudentRepository = new InMemoryStudentRepository(),
 ) {
   const app = express();
+  app.disable('x-powered-by');
   const signingKey = process.env.JWT_SECRET;
   if (!signingKey) {
     throw new Error('JWT_SECRET must be configured.');
@@ -35,9 +38,15 @@ export function createApp(
   );
 
   const apiDocumentationRouter = createApiDocumentationRouter();
+  const rateLimits = createApiRateLimits();
 
+  app.use(helmet());
   app.use(requestLogger);
-  app.use(express.json());
+  app.use('/auth/login', rateLimits.login);
+  app.use('/students', rateLimits.api);
+  app.use('/openapi.json', rateLimits.api);
+  app.use('/docs', rateLimits.api);
+  app.use(express.json({ limit: 1024 * 1024 }));
   app.use(createHealthRouter(studentRepository));
   if (apiDocumentationRouter) {
     app.use(apiDocumentationRouter);
