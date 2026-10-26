@@ -28,6 +28,9 @@ jobs:
     outputs:
       image-tag: ${{ steps.revision.outputs.image-tag }}
       image-prefix: ${{ steps.image.outputs.image-prefix }}
+      api-image-ref: ${{ steps.image.outputs.image-prefix }}-api@${{ steps.api.outputs.digest }}
+      frontend-image-ref: ${{ steps.image.outputs.image-prefix }}-frontend@${{ steps.frontend.outputs.digest }}
+      migration-image-ref: ${{ steps.image.outputs.image-prefix }}-migration@${{ steps.migration.outputs.digest }}
     steps:
       - name: Check out requested ref
         uses: actions/checkout@v4
@@ -66,6 +69,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and publish API image
+        id: api
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -75,6 +79,7 @@ jobs:
           tags: ${{ steps.image.outputs.image-prefix }}-api:${{ steps.revision.outputs.image-tag }}
 
       - name: Build and publish frontend image
+        id: frontend
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -83,6 +88,7 @@ jobs:
           tags: ${{ steps.image.outputs.image-prefix }}-frontend:${{ steps.revision.outputs.image-tag }}
 
       - name: Build and publish migration image
+        id: migration
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -91,16 +97,70 @@ jobs:
           push: true
           tags: ${{ steps.image.outputs.image-prefix }}-migration:${{ steps.revision.outputs.image-tag }}
 
+  security-scan:
+    name: Scan immutable staging images
+    needs: build-and-publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    env:
+      TRIVY_VERSION: 0.58.2
+      API_IMAGE: ${{ needs.build-and-publish.outputs.api-image-ref }}
+      FRONTEND_IMAGE: ${{ needs.build-and-publish.outputs.frontend-image-ref }}
+      MIGRATION_IMAGE: ${{ needs.build-and-publish.outputs.migration-image-ref }}
+    steps:
+      - name: Check out reviewed scanner configuration
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Authenticate to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Scan immutable API image with Trivy; report vulnerability ID, severity, and remediation
+        run: >-
+          docker run --rm
+          -v /var/run/docker.sock:/var/run/docker.sock
+          -v "$GITHUB_WORKSPACE:/work"
+          -w /work
+          "aquasecurity/trivy:${TRIVY_VERSION}"
+          image --ignorefile .trivyignore.yaml --scanners vuln
+          --severity HIGH,CRITICAL --exit-code 1 --format table "$API_IMAGE"
+
+      - name: Scan immutable frontend image with Trivy; report vulnerability ID, severity, and remediation
+        run: >-
+          docker run --rm
+          -v /var/run/docker.sock:/var/run/docker.sock
+          -v "$GITHUB_WORKSPACE:/work"
+          -w /work
+          "aquasecurity/trivy:${TRIVY_VERSION}"
+          image --ignorefile .trivyignore.yaml --scanners vuln
+          --severity HIGH,CRITICAL --exit-code 1 --format table "$FRONTEND_IMAGE"
+
+      - name: Scan immutable migration image with Trivy; report vulnerability ID, severity, and remediation
+        run: >-
+          docker run --rm
+          -v /var/run/docker.sock:/var/run/docker.sock
+          -v "$GITHUB_WORKSPACE:/work"
+          -w /work
+          "aquasecurity/trivy:${TRIVY_VERSION}"
+          image --ignorefile .trivyignore.yaml --scanners vuln
+          --severity HIGH,CRITICAL --exit-code 1 --format table "$MIGRATION_IMAGE"
+
   deploy:
     name: Deploy and verify staging
-    needs: build-and-publish
+    needs: [build-and-publish, security-scan]
     runs-on: ubuntu-latest
     environment: staging
     permissions:
       contents: read
       packages: read
     env:
-      IMAGE_PREFIX: ${{ needs.build-and-publish.outputs.image-prefix }}
       STAGING_SSH_HOST: ${{ secrets.STAGING_SSH_HOST }}
       STAGING_SSH_USER: ${{ secrets.STAGING_SSH_USER }}
       STAGING_SSH_PRIVATE_KEY: ${{ secrets.STAGING_SSH_PRIVATE_KEY }}
@@ -154,9 +214,9 @@ jobs:
       - name: Apply database migrations and verify deployed image revision with rollback
         shell: bash
         env:
-          API_IMAGE: ${{ env.IMAGE_PREFIX }}-api:${{ needs.build-and-publish.outputs.image-tag }}
-          FRONTEND_IMAGE: ${{ env.IMAGE_PREFIX }}-frontend:${{ needs.build-and-publish.outputs.image-tag }}
-          MIGRATION_IMAGE: ${{ env.IMAGE_PREFIX }}-migration:${{ needs.build-and-publish.outputs.image-tag }}
+          API_IMAGE: ${{ needs.build-and-publish.outputs.api-image-ref }}
+          FRONTEND_IMAGE: ${{ needs.build-and-publish.outputs.frontend-image-ref }}
+          MIGRATION_IMAGE: ${{ needs.build-and-publish.outputs.migration-image-ref }}
         run: |
           set -euo pipefail
           ssh -i "$HOME/.ssh/staging" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$STAGING_SSH_USER@$STAGING_SSH_HOST" \

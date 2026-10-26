@@ -9,6 +9,9 @@ on:
       - 'tests/**'
       - 'frontend/**'
       - 'tasks/**'
+      - 'scripts/**'
+      - '.npm-audit-exceptions.json'
+      - '.trivyignore.yaml'
       - 'Dockerfile'
       - 'compose.staging.yml'
       - 'jest.config.ts'
@@ -25,6 +28,9 @@ on:
       - 'tests/**'
       - 'frontend/**'
       - 'tasks/**'
+      - 'scripts/**'
+      - '.npm-audit-exceptions.json'
+      - '.trivyignore.yaml'
       - 'Dockerfile'
       - 'compose.staging.yml'
       - 'jest.config.ts'
@@ -72,6 +78,32 @@ jobs:
 
       - name: Install locked dependencies
         run: npm ci
+
+      - name: Verify npm audit gate with a controlled fixture
+        run: node scripts/npm-audit-gate.mjs --test-fixture
+
+      - name: Scan locked npm dependencies with npm audit
+        run: node scripts/npm-audit-gate.mjs
+
+      - name: Build API, frontend, and migration images for scanning
+        run: |
+          docker build --target runtime --tag school-management:ci-api .
+          docker build --file frontend/Dockerfile --tag school-management:ci-frontend .
+          docker build --target migration --tag school-management:ci-migration .
+
+      - name: Scan API, frontend, and migration images with Trivy version 0.58.2 and fixed-version remediation
+        env:
+          TRIVY_VERSION: 0.58.2
+        run: |
+          for image in school-management:ci-api school-management:ci-frontend school-management:ci-migration; do
+            docker run --rm \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              -v "$GITHUB_WORKSPACE:/work" \
+              -w /work \
+              "aquasecurity/trivy:${TRIVY_VERSION}" \
+              image --ignorefile .trivyignore.yaml --scanners vuln \
+              --severity HIGH,CRITICAL --exit-code 1 --format table "$image"
+          done
 
       - name: Type-check backend
         run: npm run typecheck

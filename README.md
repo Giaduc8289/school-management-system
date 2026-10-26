@@ -133,6 +133,14 @@ Work on a feature branch and open a pull request to `main`; do not push unreview
 
 Staging deployment is a separate, manual release action. In GitHub Actions, run **Deploy staging** with a branch, tag, or commit that is already an ancestor of `main`. The workflow builds immutable SHA-tagged API, migration, and frontend images, publishes them to GHCR, applies database migrations, updates the Docker Compose services, and verifies `/health/ready` both on the staging host and at the public staging URL. It deploys only to the protected `staging` GitHub Environment; there is no automatic production deployment.
 
+### Dependency and container image security scanning
+
+CI scans the committed `package-lock.json` with `npm audit` and builds and scans the API, frontend, and migration container images with Trivy 0.58.2 on pull requests and pushes to `main`. High and Critical findings fail the check. A controlled synthetic npm audit report is used to verify that the dependency gate detects a High finding without adding a vulnerable package to the application.
+
+Staging images are scanned after publishing and before deployment. The scanner reads the registry digests produced by the image build, and deployment uses those same digest references, so the released images are exactly the images that passed scanning. Trivy prints the affected package or image, vulnerability identifier, severity, and available fixed version/remediation in the failing job output. Scan reports are not uploaded as workflow artifacts; do not add credentials or secret values to scanner output or exception records.
+
+To triage a failure, identify the affected dependency or base image and vulnerability ID, review the upstream advisory and fixed-version guidance, then update the dependency lockfile or Docker base image and rerun CI. For a temporary exception, submit a reviewed pull request with a narrowly scoped entry in `.npm-audit-exceptions.json` for npm findings or `.trivyignore.yaml` for image findings. npm entries require `package`, `id`, `reason`, `reviewRef`, and `expiresAt`; Trivy entries require the vulnerability `id`, affected package URL (`purls`), a `statement` with the reason and review reference, and `expired_at`. Include a short, explicit ISO expiration date. The PR must receive the repository's normal required review; expired npm exceptions fail validation and expired Trivy exceptions are rejected by the scanner. Remove the exception as soon as the dependency or base image is remediated. Never use an exception to hide unrelated findings.
+
 Configure these secrets in the GitHub `staging` Environment:
 
 - `STAGING_SSH_HOST`, `STAGING_SSH_USER`, `STAGING_SSH_PRIVATE_KEY`, and pinned `STAGING_SSH_KNOWN_HOSTS` for the Linux Docker Compose host.
