@@ -7,6 +7,11 @@ on:
         description: Reviewed branch, tag, or commit to deploy
         required: true
         type: string
+      simulate_candidate_failure:
+        description: Stop the candidate API after rollout to verify automatic image rollback; this intentionally fails the run
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -101,6 +106,8 @@ jobs:
       STAGING_SSH_PRIVATE_KEY: ${{ secrets.STAGING_SSH_PRIVATE_KEY }}
       STAGING_SSH_KNOWN_HOSTS: ${{ secrets.STAGING_SSH_KNOWN_HOSTS }}
       STAGING_BASE_URL: ${{ secrets.STAGING_BASE_URL }}
+      STAGING_SMOKE_EMAIL: ${{ secrets.STAGING_SMOKE_EMAIL }}
+      STAGING_SMOKE_PASSWORD: ${{ secrets.STAGING_SMOKE_PASSWORD }}
       DEPLOY_REF: ${{ needs.build-and-publish.outputs.image-tag }}
     steps:
       - name: Check out deployment configuration
@@ -112,7 +119,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for name in STAGING_SSH_HOST STAGING_SSH_USER STAGING_SSH_PRIVATE_KEY STAGING_SSH_KNOWN_HOSTS STAGING_BASE_URL; do
+          for name in STAGING_SSH_HOST STAGING_SSH_USER STAGING_SSH_PRIVATE_KEY STAGING_SSH_KNOWN_HOSTS STAGING_BASE_URL STAGING_SMOKE_EMAIL STAGING_SMOKE_PASSWORD; do
             if [[ -z "${!name}" ]]; then
               echo "Required staging environment secret $name is not configured." >&2
               exit 1
@@ -144,7 +151,7 @@ jobs:
           ssh -i "$HOME/.ssh/staging" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$STAGING_SSH_USER@$STAGING_SSH_HOST" 'mkdir -p "$HOME/school-management-staging"'
           scp -i "$HOME/.ssh/staging" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes compose.staging.yml "$STAGING_SSH_USER@$STAGING_SSH_HOST:school-management-staging/compose.staging.yml"
 
-      - name: Apply database migrations and deploy with automatic image rollback
+      - name: Apply database migrations and verify deployed image revision with rollback
         shell: bash
         env:
           API_IMAGE: ${{ env.IMAGE_PREFIX }}-api:${{ needs.build-and-publish.outputs.image-tag }}
@@ -153,7 +160,7 @@ jobs:
         run: |
           set -euo pipefail
           ssh -i "$HOME/.ssh/staging" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$STAGING_SSH_USER@$STAGING_SSH_HOST" \
-            "API_IMAGE='$API_IMAGE' FRONTEND_IMAGE='$FRONTEND_IMAGE' MIGRATION_IMAGE='$MIGRATION_IMAGE' bash -s" <<'REMOTE'
+            "API_IMAGE='$API_IMAGE' FRONTEND_IMAGE='$FRONTEND_IMAGE' MIGRATION_IMAGE='$MIGRATION_IMAGE' DEPLOY_REF='$DEPLOY_REF' SIMULATE_CANDIDATE_FAILURE='${{ inputs.simulate_candidate_failure }}' bash -s" <<'REMOTE'
           set -euo pipefail
           cd "$HOME/school-management-staging"
           test -f .env
@@ -175,6 +182,10 @@ jobs:
           rollback_images() {
             if [[ -n "$previous_api_image" && -n "$previous_frontend_image" ]]; then
               compose "$previous_api_image" "$previous_frontend_image" "$candidate_migration_image" up -d --remove-orphans
+              if ! curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 5 http://127.0.0.1:8080/health/ready; then
+                echo "Rollback images were restored, but readiness did not recover." >&2
+                exit 1
+              fi
             else
               compose "$candidate_api_image" "$candidate_frontend_image" "$candidate_migration_image" down
             fi
@@ -185,14 +196,54 @@ jobs:
             exit 1
           fi
 
+          if [[ "$SIMULATE_CANDIDATE_FAILURE" == "true" ]]; then
+            echo "Simulating a candidate API health failure to exercise staging rollback."
+            docker stop school-management-api
+          fi
+
           if ! curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 5 http://127.0.0.1:8080/health/ready; then
             rollback_images
             exit 1
           fi
+
+          actual_api_image="$(docker inspect --format '{{.Config.Image}}' school-management-api)"
+          actual_frontend_image="$(docker inspect --format '{{.Config.Image}}' school-management-frontend)"
+          if [[ "$actual_api_image" != "$candidate_api_image" || "$actual_frontend_image" != "$candidate_frontend_image" ]]; then
+            echo "The running API or frontend image does not match the requested deployment revision." >&2
+            rollback_images
+            exit 1
+          fi
+          echo "Verified deployed API and frontend images for revision $DEPLOY_REF."
           REMOTE
 
-      - name: Verify public staging readiness
+      - name: Verify public staging readiness, frontend, staff login, and student access
         shell: bash
         run: |
           set -euo pipefail
           curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 5 "$STAGING_BASE_URL/health/ready"
+          curl --fail --silent --show-error --output /dev/null "$STAGING_BASE_URL/"
+
+          if [[ -z "$STAGING_SMOKE_EMAIL" || -z "$STAGING_SMOKE_PASSWORD" ]]; then
+            echo "Staging smoke-test credentials are required." >&2
+            exit 1
+          fi
+
+          umask 077
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+          printf '%s' "$STAGING_SMOKE_PASSWORD" |
+            jq -Rs --arg email "$STAGING_SMOKE_EMAIL" '{email: $email, password: .}' |
+            curl --fail --silent --show-error \
+              --header 'Content-Type: application/json' \
+              --data-binary @- \
+              --output "$response_file" \
+              "$STAGING_BASE_URL/auth/login"
+          unset STAGING_SMOKE_PASSWORD
+
+          access_token="$(jq -er '.accessToken | strings | select(length > 0)' "$response_file")"
+          unset STAGING_SMOKE_EMAIL
+          printf 'header = "Authorization: Bearer %s"\n' "$access_token" |
+            curl --fail --silent --show-error --output /dev/null \
+              --config - \
+              "$STAGING_BASE_URL/students"
+          unset access_token

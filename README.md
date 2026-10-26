@@ -131,10 +131,57 @@ Configure these secrets in the GitHub `staging` Environment:
 
 - `STAGING_SSH_HOST`, `STAGING_SSH_USER`, `STAGING_SSH_PRIVATE_KEY`, and pinned `STAGING_SSH_KNOWN_HOSTS` for the Linux Docker Compose host.
 - `STAGING_BASE_URL`, the HTTPS base URL used for the external readiness check.
+- `STAGING_SMOKE_EMAIL` and `STAGING_SMOKE_PASSWORD` for a dedicated non-production staff account authorized to list students. The deploy workflow checks readiness and the frontend, logs in with this account, and requests the protected `/students` endpoint. Use a staging-only password and never print the login response or bearer token in workflow logs.
 
 Grant the workflow's `GITHUB_TOKEN` permission to publish packages in GHCR. On the staging host, authenticate Docker to GHCR with a dedicated read-only package token, create `~/school-management-staging/.env` with `DATABASE_URL`, `JWT_SECRET`, and staff email/bcrypt hash values, and retain that file outside the repository with mode `0600`. Install Docker Engine and the Docker Compose plugin. The deploy workflow copies `compose.staging.yml` into that directory; ports `8080` (frontend and API reverse proxy) and outbound HTTPS must be available.
 
-If a new image fails to start or the host readiness check fails, the deployment workflow restores the previously running API and frontend image versions. To roll back manually, select the previous immutable image tags in `compose.staging.yml`'s `API_IMAGE` and `FRONTEND_IMAGE` environment, then run `docker compose -f compose.staging.yml up -d` from the staging directory and verify `https://<staging-host>/health/ready`. Database schema changes must be backward-compatible during a release; take a database backup before migrations, and restore that backup separately if a migration itself must be rolled back. This is the staging rollback procedure. Never put deployment keys, registry tokens, connection strings, or application secrets in source control.
+If a new image fails to start or the host readiness check fails, the deployment workflow restores the previously running API and frontend image versions and checks readiness again. It also confirms that the running API and frontend image references match the requested commit revision before running public smoke checks. To roll back manually, select the previous immutable image tags in `compose.staging.yml`'s `API_IMAGE` and `FRONTEND_IMAGE` environment, then run `docker compose -f compose.staging.yml up -d` from the staging directory and verify `https://<staging-host>/health/ready`. Database schema changes must be backward-compatible during a release; take a database backup before migrations, and restore that backup separately if a migration itself must be rolled back. Never put deployment keys, registry tokens, connection strings, or application secrets in source control.
+
+### Staging rollback and database recovery drill
+
+Run this drill only with synthetic records and a staging-equivalent PostgreSQL database. Do not use production data or restore into a production database. A rollback test must use a reviewed candidate revision and a staging environment where a previous healthy API and frontend image are already running:
+The failed candidate deployment drill below exercises the deployment workflow's automatic restoration of the previous images and its post-rollback readiness check.
+
+1. Use only the protected `staging` environment with synthetic data. Take a backup using the recovery procedure below, record the current immutable API and frontend image tags, and verify `/health/ready`, staff login, the frontend home page, and an authorized `GET /students`.
+2. In GitHub Actions, run **Deploy staging** for a reviewed commit already merged into `main` with `simulate_candidate_failure` enabled. This opt-in drill intentionally stops the candidate API after rollout, so the workflow is expected to fail while performing rollback. Never enable this option for production.
+3. Confirm the workflow reports the simulated failure, restores the previous API and frontend images, and verifies readiness after restoration. Confirm the running container image references match the recorded previous tags.
+4. Run **Deploy staging** again with `simulate_candidate_failure` disabled and confirm the normal deployment and public smoke checks succeed.
+
+For the database exercise, create a dedicated synthetic source database named with the suffix `_recovery_drill_source` containing a known fixture row with ID `recovery-drill-fixture`, and an empty, disposable target database named with the suffix `_recovery_drill_target`. Both must be staging-equivalent databases containing only synthetic data. Set `DRILL_SOURCE_DATABASE_URL` and `DRILL_TARGET_DATABASE_URL` in the operator's environment using the staging-equivalent database credentials; do not place connection strings in command history, reports, or logs. Run the following from a trusted environment with PostgreSQL client tools installed. The target database is destructive restore scope and must be disposable:
+
+```bash
+set -euo pipefail
+test -n "${DRILL_SOURCE_DATABASE_URL:-}"
+test -n "${DRILL_TARGET_DATABASE_URL:-}"
+source_database="$(psql "$DRILL_SOURCE_DATABASE_URL" -Atqc 'SELECT current_database()')"
+target_database="$(psql "$DRILL_TARGET_DATABASE_URL" -Atqc 'SELECT current_database()')"
+test "$source_database" != "$target_database"
+case "$source_database" in *_recovery_drill_source) ;; *) echo "Source must be a dedicated synthetic *_recovery_drill_source database." >&2; exit 1 ;; esac
+case "$target_database" in *_recovery_drill_target) ;; *) echo "Target must be a disposable *_recovery_drill_target database." >&2; exit 1 ;; esac
+case "${source_database,,}:${target_database,,}" in *prod*) echo "Production databases are forbidden." >&2; exit 1 ;; esac
+
+backup_file="$(mktemp)"
+trap 'rm -f "$backup_file"' EXIT
+pg_dump --format=custom --no-owner --no-acl --dbname="$DRILL_SOURCE_DATABASE_URL" --file="$backup_file"
+pg_restore --clean --if-exists --no-owner --no-acl --dbname="$DRILL_TARGET_DATABASE_URL" "$backup_file"
+test "$(psql "$DRILL_TARGET_DATABASE_URL" -Atqc "SELECT count(*) FROM students WHERE id = 'recovery-drill-fixture'")" -eq 1
+```
+
+Start the API against the restored target database in an isolated process by setting its `DATABASE_URL` to `DRILL_TARGET_DATABASE_URL`; verify readiness and use the staff smoke account to call `GET /students`. This confirms both the restored fixture and application connectivity without involving production. Delete the disposable target database only after recording the drill result.
+
+### Staging validation record / recovery drill report
+
+Fill in this record after actually running the staging and database drills; a blank template is not evidence that a drill was executed.
+
+- Drill date:
+- Deployed revision:
+- Previous and candidate API/frontend image tags:
+- Verification results (readiness, frontend, staff login, authorized student operation):
+- Rollback result and recovery duration:
+- Backup/restore result and restored fixture/application verification:
+- Follow-up defects or actions (or `None`):
+
+Record results without recording credentials, secrets, tokens, or personal data.
 
 ## Next planned tasks
 
